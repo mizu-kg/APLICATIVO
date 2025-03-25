@@ -2,6 +2,8 @@
 
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
+import { doc, setDoc, collection, getDocs, deleteDoc } from "firebase/firestore";
+import { firestore } from "@/services/Firebase";
 
 export type Cliente = {
   id: string
@@ -38,6 +40,7 @@ type AppState = {
   addCliente: (cliente: Omit<Cliente, "id" | "dataCadastro">) => void
   updateCliente: (id: string, cliente: Partial<Cliente>) => void
   deleteCliente: (id: string) => void
+  loadClientes: () => void
   addServico: (servico: Omit<Servico, "id">) => void
   updateServico: (id: string, servico: Partial<Servico>) => void
   deleteServico: (id: string) => void
@@ -58,41 +61,83 @@ export const useAppStore = create<AppState>()(
       servicos: [],
       debitos: [],
 
-      addCliente: (cliente) =>
-        set((state) => ({
-          clientes: [
-            ...state.clientes,
-            {
-              ...cliente,
-              id: crypto.randomUUID(),
-              dataCadastro: new Date().toISOString(),
-            },
-          ],
-        })),
+      addCliente: async (cliente) => {
+        const newCliente = {
+          ...cliente,
+          id: crypto.randomUUID(),
+          dataCadastro: new Date().toISOString(),
+        };
 
-      updateCliente: (id, cliente) =>
+        // Salva localmente
+        set((state) => ({
+          clientes: [...state.clientes, newCliente],
+        }));
+
+        // Salva no Firestore
+        try {
+          await setDoc(doc(firestore, "clientes", newCliente.id), newCliente);
+        } catch (error) {
+          console.error("Erro ao salvar cliente no Firestore:", error);
+        }
+      },
+
+      // Função para carregar os clientes do Firestore
+      loadClientes: async () => {
+        try {
+          const querySnapshot = await getDocs(collection(firestore, "clientes"));
+          const clientes = querySnapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+          })) as Cliente[];
+
+          set({ clientes });
+        } catch (error) {
+          console.error("Erro ao carregar clientes do Firestore:", error);
+        }
+      },
+
+      updateCliente: async (id, cliente) => {
         set((state) => ({
           clientes: state.clientes.map((c) => (c.id === id ? { ...c, ...cliente } : c)),
-        })),
+        }))
 
-      deleteCliente: (id) =>
+        try {
+          //cria a referencia do cliente no firestore
+          const clienteRef = doc(firestore, "clientes", id);
+          //atualiza o cliente
+          await setDoc(clienteRef, cliente, { merge: true });
+        } catch (error) {
+          console.error("Erro ao atualizar cliente no Firestore:", error);
+        }
+      },
+
+      deleteCliente: async (id) =>{
         set((state) => ({
           clientes: state.clientes.filter((c) => c.id !== id),
           servicos: state.servicos.filter((s) => s.clienteId !== id),
           debitos: state.debitos.filter((d) => d.clienteId !== id),
-        })),
+        }))
+
+        try {
+          //cria a referencia do cliente no firestore
+          const clienteRef = doc(firestore, "clientes", id);
+          //deleta o cliente
+          deleteDoc(clienteRef);
+        } catch (error) {
+          console.error("Erro ao deletar cliente no Firestore:", error);
+        }
+      },
 
       addServico: (servico) =>
         set((state) => {
           const novoServico = {
             ...servico,
             id: crypto.randomUUID(),
-          }
+          };
 
-          // Se o serviço já for criado como concluído, gera um débito automaticamente
           if (servico.status === "concluido") {
-            const dataVencimento = new Date()
-            dataVencimento.setDate(dataVencimento.getDate() + 30)
+            const dataVencimento = new Date();
+            dataVencimento.setDate(dataVencimento.getDate() + 30);
 
             return {
               servicos: [...state.servicos, novoServico],
@@ -108,31 +153,27 @@ export const useAppStore = create<AppState>()(
                   status: "pendente",
                 },
               ],
-            }
+            };
           }
 
           return {
             servicos: [...state.servicos, novoServico],
-          }
+          };
         }),
 
       updateServico: (id: string, servico: Partial<Servico>) =>
         set((state) => {
-          const servicoAtual = state.servicos.find((s) => s.id === id)
-          const servicosAtualizados = state.servicos.map((s) => (s.id === id ? { ...s, ...servico } : s))
+          const servicoAtual = state.servicos.find((s) => s.id === id);
+          const servicosAtualizados = state.servicos.map((s) => (s.id === id ? { ...s, ...servico } : s));
 
-          // Verifica se o status está sendo alterado para "concluido"
           if (servicoAtual && servico.status === "concluido" && servicoAtual.status !== "concluido") {
-            const servicoCompleto = servicosAtualizados.find((s) => s.id === id)!
+            const servicoCompleto = servicosAtualizados.find((s) => s.id === id)!;
 
-            // Calcula a data de vencimento (30 dias após a conclusão)
-            const dataVencimento = new Date()
-            dataVencimento.setDate(dataVencimento.getDate() + 30)
+            const dataVencimento = new Date();
+            dataVencimento.setDate(dataVencimento.getDate() + 30);
 
-            // Verifica se já existe um débito para este serviço
-            const debitoExistente = state.debitos.some((d) => d.servicoId === id)
+            const debitoExistente = state.debitos.some((d) => d.servicoId === id);
 
-            // Se não existir débito, cria um novo
             if (!debitoExistente) {
               return {
                 servicos: servicosAtualizados,
@@ -148,13 +189,13 @@ export const useAppStore = create<AppState>()(
                     status: "pendente",
                   },
                 ],
-              }
+              };
             }
           }
 
           return {
             servicos: servicosAtualizados,
-          }
+          };
         }),
 
       deleteServico: (id) =>
@@ -191,14 +232,12 @@ export const useAppStore = create<AppState>()(
           ),
         })),
 
-      // Funções para backup e restauração
       setClientes: (clientes) => set({ clientes }),
       setServicos: (servicos) => set({ servicos }),
       setDebitos: (debitos) => set({ debitos }),
     }),
     {
       name: "app-storage",
-      // Configurações adicionais para garantir persistência
       partialize: (state) => ({
         clientes: state.clientes,
         servicos: state.servicos,
@@ -206,5 +245,5 @@ export const useAppStore = create<AppState>()(
       }),
     },
   ),
-)
+);
 

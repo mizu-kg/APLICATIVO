@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useAppStore, type Cliente } from "@/lib/data"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -12,7 +12,7 @@ import { Plus, Pencil, Trash2 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 
 export default function ClientesPage() {
-  const { clientes, addCliente, updateCliente, deleteCliente } = useAppStore()
+  const { clientes, addCliente, updateCliente, deleteCliente, loadClientes } = useAppStore()
   const { toast } = useToast()
   const [isEditing, setIsEditing] = useState(false)
   const [clienteId, setClienteId] = useState<string | null>(null)
@@ -22,6 +22,12 @@ export default function ClientesPage() {
     telefone: "",
     endereco: "",
   })
+
+  // Carregar clientes ao montar a página
+  useEffect(() => {
+    loadClientes();
+  }
+  , [])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
